@@ -5,9 +5,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("boto3").setLevel(logging.WARNING)
 
-
-import boto3
-import os
 import feedparser
 from boto3 import Session
 from boto3 import resource
@@ -19,6 +16,7 @@ from bs4 import BeautifulSoup
 import datetime
 import dateutil.parser
 import hashlib
+from botocore.client import Config
 
 MAX_TPS = 10
 MAX_CONCURENT_CONNECTIONS = 20
@@ -84,11 +82,13 @@ def lambda_handler(event, context):
 
     session = Session(region_name="us-west-2")
     polly = session.client("polly")
-    s3 = resource('s3')
+    # s3 = resource('s3', aws_access_key_id=AWS_ACCESS_KEY_ID,
+    #                                   aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+    s3 = resource('s3', config=Config(signature_version='s3v4'))
     bucket = s3.Bucket(bucket_name)
 
     logging.info("getting list of existing objects in the given bucket")
-    files = set(o.key for o in bucket.objects.all())
+    # files = set(o.key for o in bucket.objects.all())
 
     feed = feedparser.parse(rss)
 
@@ -107,12 +107,12 @@ def lambda_handler(event, context):
         fe.id(entry['id'])
         fe.title(entry['title'])
         fe.published(entry['published'])
-        entry_url = ENTRY_URL.format(bucket=bucket_name, filename=filename, region=os.environ["AWS_REGION"])
+        entry_url = ENTRY_URL.format(bucket=bucket_name, filename=filename, region="eu-central-1")
         fe.enclosure(entry_url, 0, 'audio/mpeg')
-        if filename in files:
-            logging.info('Article "%s" with id %s already exist, skipping.'
-                         % (entry['title'], entry['id']))
-            continue
+        # if filename in files:
+        #     logging.info('Article "%s" with id %s already exist, skipping.'
+        #                  % (entry['title'], entry['id']))
+        #     continue
         try:
             logging.info("Next entry, size: %d" % len(entry['content']))
             logging.debug("Content: %s" % entry['content'])
@@ -121,7 +121,8 @@ def lambda_handler(event, context):
                     OutputFormat="mp3",
                     VoiceId="Joanna")
             with closing(response["AudioStream"]) as stream:
-                bucket.put_object(Key=filename, Body=stream.read())
+                # bucket.put_object(Key=filename, Body=stream.read())
+                s3.Object(bucket_name, filename).put(Body=stream.read())
         except BotoCoreError as error:
             logging.error(error)
     bucket.put_object(Key='podcast.xml', Body=fg.rss_str(pretty=True))
